@@ -9,6 +9,9 @@ import pprint
 import requests, urllib.parse
 import pandas as pd
 import lcd_font
+import csv
+from chardet.universaldetector import UniversalDetector
+import pandas as pd
 
 
 client = MongoClient(
@@ -33,6 +36,10 @@ time = datetime.now().timestamp()
 count_data = 0
 font_data = lcd_font.font()
 
+dt = datetime.today()
+
+headerCSV = ['รหัสนิสิต', 'ชื่อ-นามสกุล', 'เวียง', 'เวลาที่เข้าร่วม']
+
 
 
 token = "mtf1gxq3x75d9rHSFt54zyuCgotm07GklL3nccPosbe"
@@ -41,6 +48,8 @@ HEADERS = {'Authorization': 'Bearer ' + token}
 
 listWeing = ['bour', 'chiangrang', 'jomtong', 'kaluang', 'lor', 'namtao']
 listWeingThai =['บัว','เชียงแรง','จอมทอง','กาหลวง','ลอ','น้ำเต้า']
+
+
 
 # activityname = input("Enter Name : ")
 # 
@@ -62,7 +71,7 @@ def findWeingNameThai(weingNameEN):
             return ''
 
 def write_tt_text(image,x,y,text):
-    label_w = 250
+    label_w = 370
     label_h = 40
     try:
         win_text=text.decode('UTF-8')
@@ -70,9 +79,12 @@ def write_tt_text(image,x,y,text):
     except:
         win_text=text+'  '
     Font1 = ImageFont.truetype("AgaraDull.ttf", 30)
-    image_pil = Image.new("RGB",(label_w,label_h),(0,0,0))
+    image_pil = Image.new("RGB",(label_w,label_h),(255,255,255))
     draw = ImageDraw.Draw(image_pil)
-    draw.text((5,5),win_text,(255,255,255),font=Font1)
+    shape = [(0, 0), (label_w ,label_h)]
+    draw.rectangle(shape, fill ="#ffffff", outline ="black",width=2)
+
+    draw.text((5,5),win_text,(0,0,0),font=Font1)
     del draw
     
     cv_image = np.array(image_pil) 
@@ -162,6 +174,7 @@ def isDuplicateId(id, activity,actYear):
 def send(id):
     global count_data 
     global GWeingName
+    global GStudentName
     Log = db["Log"]
     data = db["data"]
     post = db["post"]
@@ -171,7 +184,7 @@ def send(id):
 
     actYear = activity[3]
 
-    weing = getWeingFromStuID(id)    
+    weing,GStudentName = getWeingAndNameFromStuID(id)    
     GWeingName = findWeingNameThai(weing)
 
     #Query from mongodb and set current count data
@@ -181,7 +194,7 @@ def send(id):
     date = datetime.now()
     if(activity[2] == 1):
         post = {"name": name, "id": id, "date": date,"activity":activity[0],'actYear':actYear,'weing':weing}        
-        urlform ="https://fe80-2403-6200-8858-b4dd-8c66-d019-caf7-bc3c.ngrok.io/assessmentform/{}/{}/{}".format(activity[0],id,actYear);
+        urlform ="https://d666-2403-6200-8858-b4dd-8dd4-f77f-20ba-8065.ngrok.io/assessmentform/{}/{}/{}".format(activity[0],id,actYear);
         msg = "{} ชื่อ-นามสกุล: {} รหัสนิสิต: {} เวียง: {} เวลาที่เข้าร่วม: {} หลังจากเสร็จสิ้นกิจกรรม กรุณาทำแบบประเมินกิจกรรมให้ด้วยครับ แบบฟอร์มตาม URL นี้ : {}".format(activity[0],name,id,GWeingName,date,urlform.replace(' ','_'))
                 
         if(not isDuplicateId(id,activity[0],actYear)):
@@ -189,10 +202,39 @@ def send(id):
             print("Count activity "+ activity[0] +" update : "+ str(count_data))
             data.update_one(activity[1], {'$set': {'count': count_data}})
             Log.insert_one(post).inserted_id
+
+            fileNameExport = str(actYear)+'_'+activity[0]+'_'+str(dt.year)+'-'+str(dt.month)+'-'+str(dt.day)+'.csv'
+            fileNameExport2 = str(actYear)+'_'+activity[0]+'_'+str(dt.year)+'-'+str(dt.month)+'-'+str(dt.day)+'.xlsx'
+            #initial file csv
+            if(not os.path.isfile(fileNameExport)):    
+                f = open(fileNameExport,'w',encoding='utf-8')
+                for i,item in enumerate(headerCSV):
+                    f.write(item)
+                    if i<len(headerCSV)-1:
+                        f.write(',')
+                f.close()
+
+            itemData=[id,name,weing,date]
+            f = open(fileNameExport,'a',encoding='utf-8')
+            f.write('\n')
+            for i,item in enumerate(itemData):            
+                if type(item)=='str':                                
+                    f.write(item)                
+                else:
+                    f.write(str(item))
+
+                if i<len(itemData)-1:
+                    f.write(',')
+            f.close()
+
+            read_file = pd.read_csv(fileNameExport)            
+            read_file.to_excel(fileNameExport2, index = None, header=True)
         
         print("Current Count Data : "+ str(count_data))
         
         requests.post(url, headers=HEADERS, params={"message": msg})
+        
+        
         print('success')
 
 def inTime():
@@ -234,7 +276,7 @@ def getCurrentCountByActivity(activity,actYear):
     print("currentCountData :" + str(currentCountData))
     return currentCountData
 
-def getWeingFromStuID(stuID):
+def getWeingAndNameFromStuID(stuID):
     post = db["posts"]
     filters = {'id':stuID}
     x = post.find_one(filters)
@@ -245,7 +287,7 @@ def getWeingFromStuID(stuID):
             return ''
         else:
             # print(x['weing'])
-            return x['weing']
+            return x['weing'] , x['name']
     else:
         #print('Student ID :'+ str(stuID)+' is not found weing :')
         return ''
@@ -299,12 +341,13 @@ while True:
         # print("Show Weing :"+GWeingName)
         # cv2.putText(img, "STUID is {} {}".format(id,GWeingName), (80, 80) , fontface, fontscale, (0, 0, 0))
         # write_tt_text(img,80,80,"STUID is {} {}".format(id,GWeingName))
-        img = write_tt_text(img,80,80,"STUID is {} {}".format(id,GWeingName))
+        img = write_tt_text(img,80,80,"รหัสนิสิต: {} ชื่อ-นามสกุล: {} เวียง: {}".format(id,GStudentName,GWeingName))
 
         
     if (state == 2 and len(faces) == 0 and datetime.now().timestamp() - time > 2): 
         state = 0
         GWeingName =""
+        GStudentName=""
     # print(datetime.now().timestamp() - time)
 		
     cv2.imshow("Face", img)
